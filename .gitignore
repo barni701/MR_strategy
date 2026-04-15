@@ -210,3 +210,17 @@ __marimo__/
 #data
 Data/*
 !Data/.gitkeep
+
+Data_5min/*
+!Data_5min/.gitkeep
+
+ML_Data/*
+!ML_Data/.gitkeep
+
+Data_1D/*
+!Data_1D/.gitkeep
+
+
+
+# File types 
+*.pdf
