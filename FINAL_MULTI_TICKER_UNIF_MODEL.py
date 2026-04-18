@@ -629,39 +629,99 @@ def plot_monte_carlo(paths_df: pd.DataFrame, initial_capital: float = INITIAL_CA
     plt.savefig("monte_carlo.pdf", format='pdf', bbox_inches='tight')
     plt.show()
 
-def plot_dual_distributions(executed_trades: pd.DataFrame, mc_paths_df: pd.DataFrame, initial_capital: float):
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
-    
-    #Per trade distribution
-    trade_profits = executed_trades['Net_PnL'].dropna()
-    median_profit = trade_profits.median()
-    
-    ax1.hist(trade_profits, bins=40, color='skyblue', edgecolor='black')
-    ax1.axvline(x=0, color='red', linestyle='-', linewidth=1.5, label='Breakeven ($0)')
-    ax1.axvline(x=median_profit, color='green', linestyle='--', linewidth=2, label=f'Median (${median_profit:.0f})')
-    ax1.set_title("Distribution of Net Profit/Loss Per Trade", fontsize=12)
-    ax1.set_xlabel("Net PnL ($)", fontsize=10)
-    ax1.set_ylabel("Frequency", fontsize=10)
-    ax1.legend(loc='upper right')
-    ax1.grid(True, alpha=0.3)
+def plot_trade_return_distributions(
+    ml_executed_trades: pd.DataFrame,
+    baseline_trades: pd.DataFrame,
+    output_path: str = "trade_distribution.pdf",
+):
+    ml_trade_profits = ml_executed_trades["Net_PnL"].dropna()
+    baseline_trade_profits = baseline_trades["Net_PnL"].dropna()
+    combined_trade_profits = pd.concat([ml_trade_profits, baseline_trade_profits], ignore_index=True)
 
-    # Per run distribution
+    if combined_trade_profits.empty:
+        return
+
+    bin_edges = np.histogram_bin_edges(combined_trade_profits.to_numpy(), bins=40)
+    x_min = float(bin_edges[0])
+    x_max = float(bin_edges[-1])
+
+    fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+    plot_specs = [
+        (axes[0], ml_trade_profits, "ML Distribution of Net Profit/Loss Per Trade", "steelblue"),
+        (axes[1], baseline_trade_profits, "Baseline Distribution of Net Profit/Loss Per Trade", "gray"),
+    ]
+
+    for ax, trade_profits, title, color in plot_specs:
+        median_profit = trade_profits.median()
+
+        ax.hist(trade_profits, bins=bin_edges, color=color, edgecolor="black")
+        ax.axvline(x=0, color="red", linestyle="-", linewidth=1.5, label="Breakeven ($0)")
+        if not trade_profits.empty:
+            ax.axvline(
+                x=median_profit,
+                color="green",
+                linestyle="--",
+                linewidth=2,
+                label=f"Median (${median_profit:.0f})",
+            )
+
+        ax.set_title(title, fontsize=12)
+        ax.set_ylabel("Frequency", fontsize=10)
+        ax.set_xlim(x_min, x_max)
+        ax.legend(loc="upper right")
+        ax.grid(True, alpha=0.3)
+
+    axes[-1].set_xlabel("Net PnL ($)", fontsize=10)
+
+    plt.tight_layout()
+    plt.savefig(output_path, format="pdf", bbox_inches="tight")
+    plt.show()
+
+def plot_final_equity_distribution(
+    mc_paths_df: pd.DataFrame,
+    initial_capital: float,
+    strategy_label: str = "",
+    output_path: str = "final_equity_distribution.pdf",
+):
+    title_prefix = f"{strategy_label} " if strategy_label else ""
+    plt.figure(figsize=(8, 6))
     final_equities = mc_paths_df.iloc[-1].to_numpy()
     p5_equity = np.percentile(final_equities, 5)
     median_equity = np.median(final_equities)
-    
-    ax2.hist(final_equities, bins=50, color='lightgreen', edgecolor='black')
-    ax2.axvline(x=initial_capital, color='red', linestyle='-', linewidth=1.5, label=f'Initial Capital (${initial_capital:,.0f})')
-    ax2.axvline(x=p5_equity, color='orange', linestyle='--', linewidth=2, label=f'5th Percentile (${p5_equity:,.0f})')
-    ax2.axvline(x=median_equity, color='green', linestyle='-', linewidth=2, label=f'Median (${median_equity:,.0f})')
-    ax2.set_title(f"Distribution of Final Portfolio Equity ({len(final_equities):,} MC Runs)", fontsize=12)
-    ax2.set_xlabel("Final Portfolio Equity ($)", fontsize=10)
-    ax2.set_ylabel("Frequency", fontsize=10)
-    ax2.legend(loc='upper right')
-    ax2.grid(True, alpha=0.3)
-    
+
+    plt.hist(final_equities, bins=50, color="lightgreen", edgecolor="black")
+    plt.axvline(
+        x=initial_capital,
+        color="red",
+        linestyle="-",
+        linewidth=1.5,
+        label=f"Initial Capital (${initial_capital:,.0f})",
+    )
+    plt.axvline(
+        x=p5_equity,
+        color="orange",
+        linestyle="--",
+        linewidth=2,
+        label=f"5th Percentile (${p5_equity:,.0f})",
+    )
+    plt.axvline(
+        x=median_equity,
+        color="green",
+        linestyle="-",
+        linewidth=2,
+        label=f"Median (${median_equity:,.0f})",
+    )
+    plt.title(
+        f"{title_prefix}Distribution of Final Portfolio Equity ({len(final_equities):,} MC Runs)",
+        fontsize=12,
+    )
+    plt.xlabel("Final Portfolio Equity ($)", fontsize=10)
+    plt.ylabel("Frequency", fontsize=10)
+    plt.legend(loc="upper right")
+    plt.grid(True, alpha=0.3)
+
     plt.tight_layout()
-    plt.savefig("trade_distribution.pdf", format='pdf', bbox_inches='tight')
+    plt.savefig(output_path, format='pdf', bbox_inches='tight')
     plt.show()
 
 
@@ -889,6 +949,7 @@ def main():
     ml_mc_stats = None
     base_mc_summary = None
     ml_mc_summary = None
+    base_mc_paths = None
     ml_mc_paths = None
     paired_mc_block_starts = None
 
@@ -902,7 +963,7 @@ def main():
 
     try:
         if len(base_mc_returns) >= 20:
-            _, base_mc_stats, base_mc_summary = monte_carlo_block_bootstrap_from_daily_returns(
+            base_mc_paths, base_mc_stats, base_mc_summary = monte_carlo_block_bootstrap_from_daily_returns(
                 base_mc_returns,
                 initial_capital=INITIAL_CAPITAL,
                 n_sims=N_SIMS,
@@ -936,8 +997,12 @@ def main():
 
             if ml_mc_paths is not None:
                 plot_monte_carlo(ml_mc_paths, INITIAL_CAPITAL)
-            if not executed_trades.empty and ml_mc_paths is not None:
-                plot_dual_distributions(executed_trades, ml_mc_paths, INITIAL_CAPITAL)
+                plot_final_equity_distribution(
+                    ml_mc_paths,
+                    INITIAL_CAPITAL,
+                    strategy_label="ML",
+                    output_path="ml_final_equity_distribution.pdf",
+                )
 
         if base_mc_summary is not None:
             print("\n" + "="*60)
@@ -949,6 +1014,20 @@ def main():
             print_metric_distribution("Annualized Sharpe", base_mc_summary['annualized_sharpe'], "ratio")
             print_metric_distribution("Max Drawdown", base_mc_summary['max_drawdown_pct'], "percent")
             print(f"Probability of Loss: {base_mc_summary['probability_of_loss'] * 100:.2f}%")
+            if base_mc_paths is not None:
+                plot_final_equity_distribution(
+                    base_mc_paths,
+                    INITIAL_CAPITAL,
+                    strategy_label="Baseline",
+                    output_path="baseline_final_equity_distribution.pdf",
+                )
+
+        if not executed_trades.empty and not all_base_trades.empty:
+            plot_trade_return_distributions(
+                executed_trades,
+                all_base_trades,
+                output_path="trade_distribution.pdf",
+            )
 
         if ml_mc_stats is not None and base_mc_stats is not None:
             mc_comparison = compare_monte_carlo_strategies(ml_mc_stats, base_mc_stats)
